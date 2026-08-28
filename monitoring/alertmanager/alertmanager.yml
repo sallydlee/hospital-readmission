@@ -1,0 +1,32 @@
+# Fired alerts land here for grouping/deduplication/routing. Ships with
+# no real notification channel wired up (alerts still show at
+# http://localhost:9093) - swap in one of the commented examples for
+# actual Slack/email/PagerDuty notifications.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: "default-receiver"
+  group_by: ["alertname"]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 1h
+
+receivers:
+  - name: "default-receiver"
+    # webhook_configs:
+    #   - url: "https://your-webhook-endpoint.example.com/alerts"
+    #
+    # slack_configs:
+    #   - api_url: "https://hooks.slack.com/services/T000/B000/XXXXXXXX"
+    #     channel: "#readmission-api-alerts"
+    #     send_resolved: true
+    #
+    # email_configs:
+    #   - to: "oncall@example.com"
+    #     from: "alertmanager@example.com"
+    #     smarthost: "smtp.example.com:587"
+    #     auth_username: "alertmanager@example.com"
+    #     auth_password: "your-smtp-password"
+    #     send_resolved: true

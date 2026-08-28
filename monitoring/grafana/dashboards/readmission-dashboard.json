@@ -1,0 +1,121 @@
+{
+  "title": "Hospital Readmission API Monitoring",
+  "uid": "hospital-readmission-api",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "API Request Volume (req/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(readmission_api_requests_total[1m])) by (endpoint, http_status)",
+          "legendFormat": "{{endpoint}} [{{http_status}}]"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "API Latency - p50 / p95 / p99 (seconds)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(readmission_api_request_latency_seconds_bucket{endpoint=\"/predict\"}[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(readmission_api_request_latency_seconds_bucket{endpoint=\"/predict\"}[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(readmission_api_request_latency_seconds_bucket{endpoint=\"/predict\"}[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Error Rate - % of requests returning 5xx",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(readmission_api_requests_total{http_status=~\"5..\"}[5m])) / sum(rate(readmission_api_requests_total[5m]))",
+          "legendFormat": "% 5xx"
+        },
+        {
+          "expr": "100 * sum(rate(readmission_api_requests_total{http_status=~\"4..\"}[5m])) / sum(rate(readmission_api_requests_total[5m]))",
+          "legendFormat": "% 4xx (client errors, e.g. bad input)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Prediction Distribution - High vs Low Risk (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(readmission_api_prediction_outcome_total[1m])) by (risk_level)",
+          "legendFormat": "{{risk_level}} risk"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Predicted Probability Distribution (current window)",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum by (le) (increase(readmission_api_prediction_probability_bucket[$__range]))",
+          "legendFormat": "≤ {{le}}",
+          "format": "time_series"
+        }
+      ],
+      "description": "Shape of the model's raw predicted-probability output. Clustering near 0 or 1 suggests confident predictions; clustering near the 0.3 threshold suggests many borderline cases."
+    },
+    {
+      "id": 6,
+      "title": "Model Loaded",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
+      "targets": [{ "expr": "readmission_api_model_loaded" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "NOT LOADED", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "loaded", "color": "green" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Total Requests Served",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
+      "targets": [{ "expr": "sum(readmission_api_requests_total)" }]
+    },
+    {
+      "id": 8,
+      "title": "Total High-Risk Predictions",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 20 },
+      "targets": [{ "expr": "sum(readmission_api_prediction_outcome_total{risk_level=\"high\"})" }]
+    },
+    {
+      "id": 9,
+      "title": "Total 5xx Errors",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 20 },
+      "targets": [{ "expr": "sum(readmission_api_requests_total{http_status=~\"5..\"})" }]
+    }
+  ]
+}

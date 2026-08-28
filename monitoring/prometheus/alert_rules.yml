@@ -1,0 +1,57 @@
+groups:
+  - name: hospital-readmission-api-alerts
+    rules:
+      # --- API downtime ---
+      # "up" is created automatically by Prometheus for every scrape
+      # target: 1 if the last scrape succeeded, 0 if it failed. Fires
+      # even if the process has crashed entirely and can't answer /metrics.
+      - alert: ReadmissionAPIDown
+        expr: up{job="hospital-readmission-api"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Hospital readmission API is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for at least 30 seconds."
+
+      # --- Model failed to load (process is up, but can't actually predict) ---
+      # Catches the specific failure mode app.py's own /health check already
+      # detects (model is None) - this makes it something Prometheus/
+      # Alertmanager can also page on, not just something a human has to
+      # notice by checking /health manually.
+      - alert: ReadmissionAPIModelNotLoaded
+        expr: readmission_api_model_loaded == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Hospital readmission API's model failed to load"
+          description: "The API process is up but readmission_api_model_loaded is 0 - /predict will return 503 for every request."
+
+      # --- Abnormal error rate ---
+      # % of requests returning 5xx over a 5-minute window, sustained for
+      # at least 1 minute so a single blip doesn't page anyone.
+      - alert: ReadmissionAPIHighErrorRate
+        expr: |
+          (
+            sum(rate(readmission_api_requests_total{http_status=~"5.."}[5m]))
+            /
+            sum(rate(readmission_api_requests_total[5m]))
+          ) * 100 > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hospital readmission API error rate is abnormally high"
+          description: "More than 5% of requests have returned 5xx over the last 5 minutes (current value: {{ $value | printf \"%.1f\" }}%)."
+
+      # --- p95 latency degradation (bonus, same pattern as above) ---
+      - alert: ReadmissionAPIHighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(readmission_api_request_latency_seconds_bucket{endpoint="/predict"}[5m])) by (le)) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hospital readmission API p95 latency is elevated"
+          description: "p95 latency on /predict has been above 1s for 2+ minutes (current value: {{ $value | printf \"%.2f\" }}s)."
