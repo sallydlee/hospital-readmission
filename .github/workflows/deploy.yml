@@ -1,0 +1,120 @@
+name: Test, Build, and Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+env:
+  AWS_REGION: us-west-2
+  EB_APPLICATION_NAME: readmission-api
+
+jobs:
+  test:
+    name: Run unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: api/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        run: pytest tests/ -v
+
+  # ------------------------------------------------------------------
+  # Packages the Flask app (application code) into the zip artifact
+  # EB deploys. Build once and shared by both deploy jobs so dev 
+  # and prod always ship the exact same bytes for a given commit.
+  # ------------------------------------------------------------------
+  build:
+    name: Build application package
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Create deployment package
+        run: |
+          cd api
+          zip -r ../deploy.zip . \
+            -x "tests/*" \
+            -x ".elasticbeanstalk/*" \
+            -x "requirements-dev.txt" \
+            -x "__pycache__/*" \
+            -x "*.pyc" \
+            -x ".pytest_cache/*"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-package
+          path: deploy.zip
+          retention-days: 7
+
+  # ------------------------------------------------------------------
+  # Dev deploy: only on pushes to the dev branch.
+  # ------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to EB (dev)
+    needs: build
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-package
+
+      - name: Deploy to Elastic Beanstalk (dev)
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: ${{ env.EB_APPLICATION_NAME }}
+          environment_name: readmission-api-dev-env
+          region: ${{ env.AWS_REGION }}
+          version_label: dev-${{ github.sha }}
+          deployment_package: deploy.zip
+          use_existing_version_if_available: true
+
+  # ------------------------------------------------------------------
+  # Prod deploy: only on pushes to main.
+  # ------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to EB (prod)
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-package
+
+      - name: Deploy to Elastic Beanstalk (prod)
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: ${{ env.EB_APPLICATION_NAME }}
+          environment_name: readmission-api-env
+          region: ${{ env.AWS_REGION }}
+          version_label: prod-${{ github.sha }}
+          deployment_package: deploy.zip
+          use_existing_version_if_available: true
