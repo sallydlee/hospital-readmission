@@ -2,8 +2,6 @@ import logging
 import os
 import time
 
-import joblib
-import pandas as pd
 from flask import Flask, jsonify, request
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -16,11 +14,15 @@ from prometheus_client import (
 )
 
 from feature_engineering import InvalidRequestError, transform_record, validate_request
+from predictors import get_predictor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MODEL_PATH = os.environ.get("MODEL_PATH", os.path.join("model", "model.joblib"))
+# Which scoring backend to use — "local" (default, in-process joblib model)
+# or "sagemaker" (calls a live SageMaker endpoint). See predictors/__init__.py
+# and the top-level README for the full list of related env vars.
+MODEL_BACKEND = os.environ.get("MODEL_BACKEND", "local").lower()
 
 # Imbalanced target (~9% positive in training). 0.3 threshold
 # catches most true readmissions at the cost of more false positives
@@ -50,7 +52,7 @@ REQUEST_LATENCY = Histogram(
     ["method", "endpoint"],
 )
 
-# Business metric: how predictions are distributed between high/low risk
+# how predictions are distributed between high/low risk
 PREDICTION_OUTCOME = Counter(
     "readmission_api_prediction_outcome_total",
     "Count of predictions by risk category",
@@ -64,7 +66,7 @@ PREDICTION_PROBABILITY = Histogram(
     buckets=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
 )
 
-# 1 if the model loaded successfully at startup, 0 if it didn't\
+# 1 if the model loaded successfully at startup, 0 if it didn't
 MODEL_LOADED = Gauge(
     "readmission_api_model_loaded",
     "1 if the ML model loaded successfully at startup, 0 otherwise",
@@ -73,12 +75,12 @@ MODEL_LOADED = Gauge(
 
 
 try:
-    model = joblib.load(MODEL_PATH)
-    logger.info(f"Loaded model from {MODEL_PATH}")
-    MODEL_LOADED.set(1)
+    predictor = get_predictor()
+    logger.info(f"Initialized '{MODEL_BACKEND}' predictor backend")
+    MODEL_LOADED.set(1 if predictor.is_healthy() else 0)
 except Exception:
-    logger.exception(f"Failed to load model from {MODEL_PATH}")
-    model = None
+    logger.exception(f"Failed to initialize '{MODEL_BACKEND}' predictor backend")
+    predictor = None
     MODEL_LOADED.set(0)
 
 
@@ -101,15 +103,15 @@ def _record_request_metrics(response):
 
 @application.get("/health")
 def health():
-    if model is None:
-        return jsonify(status="unhealthy", reason="model not loaded"), 503
-    return jsonify(status="healthy"), 200
+    if predictor is None or not predictor.is_healthy():
+        return jsonify(status="unhealthy", backend=MODEL_BACKEND, reason="model not loaded"), 503
+    return jsonify(status="healthy", backend=MODEL_BACKEND), 200
 
 
 @application.post("/predict")
 def predict():
-    if model is None:
-        return jsonify(error="model not loaded"), 503
+    if predictor is None:
+        return jsonify(error="model not loaded", backend=MODEL_BACKEND), 503
 
     payload = request.get_json(silent=True)
     if payload is None:
@@ -124,8 +126,7 @@ def predict():
         return jsonify(error=f"invalid input: {e}"), 400
 
     try:
-        X = pd.DataFrame([features])
-        probability = float(model.predict_proba(X)[0, 1])
+        probability = predictor.predict_proba(features)
     except Exception:
         logger.exception("Prediction failed")
         return jsonify(error="internal error while scoring the request"), 500

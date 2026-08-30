@@ -4,3 +4,6 @@ joblib==1.5.3
 pandas==3.0.2
 scikit-learn==1.8.0
 prometheus-client==0.20.0
+# Only required at runtime when MODEL_BACKEND=sagemaker (predictors/sagemaker.py
+# imports it lazily), but included by default so both backends work out of the box.
+boto3==1.35.99
